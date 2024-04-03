@@ -2,7 +2,7 @@ import pprint
 from datasets import Features, Value, load_dataset
 from transformers import (
     TrainingArguments,
-    GPT2Config,
+    AutoConfig,
     GPT2LMHeadModel,
     GPT2TokenizerFast,
     DataCollatorForLanguageModeling,
@@ -21,21 +21,26 @@ features = Features(
 dataset = load_dataset(
     "csv", data_files="climbs.csv", delimiter=",", features=features, split="train"
 )
-dataset = dataset.filter(lambda example: example["name"] != None)
+dataset = dataset.filter(lambda example: example["name"] is not None)
 
 def wrap(example):
-    example["name"] = "<|endoftext|>" + example["name"] + "<|endoftext|>"
+    example["name"] = example["name"] + "<|endoftext|>"
     return example
 
 dataset = dataset.map(wrap)
 
 datasets = dataset.train_test_split()
 
-config = GPT2Config.from_pretrained("gpt2")
+#config = GPT2Config.from_pretrained("gpt2")
+tokenizer = GPT2TokenizerFast.from_pretrained("gpt2", padding_side="left")
+if tokenizer.pad_token is None:
+    tokenizer.pad_token = tokenizer.eos_token
+print(tokenizer.encode("TESTING", add_special_tokens=False, return_tensors="pt"))
+
+config =  AutoConfig.from_pretrained("gpt2", n_layer=3)
+
 model = GPT2LMHeadModel.from_pretrained("gpt2", config=config)
-tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-tokenizer.pad_token=tokenizer.eos_token
-tokenizer.pad_token_id=tokenizer.eos_token_id
+model.half()
 
 tokenized_train = datasets["train"].map(
     lambda examples: tokenizer(examples["name"]), batched=True
@@ -47,11 +52,8 @@ tokenized_test = datasets["test"].map(
 pprint.pprint(datasets["train"][0])
 pprint.pprint(tokenized_train[0])
 
-tokenized_train = tokenized_train.remove_columns(["name"])
-tokenized_test = tokenized_test.remove_columns(["name"])
-
 data_collator = DataCollatorForLanguageModeling(
-    tokenizer=tokenizer, mlm=False, mlm_probability=0.15
+    tokenizer=tokenizer, mlm=False
 )
 
 training_args = TrainingArguments(
@@ -59,14 +61,14 @@ training_args = TrainingArguments(
     evaluation_strategy="steps",  # evaluate each `logging_steps` steps
     overwrite_output_dir=True,
     num_train_epochs=2,  # number of training epochs, feel free to tweak
-    per_device_train_batch_size=4,  # the training batch size, put it as high as your GPU memory fits
-    gradient_accumulation_steps=1,  # accumulating the gradients before updating the weights
-    per_device_eval_batch_size=8,  # evaluation batch size
-    logging_steps=1000,  # evaluate, log and save model checkpoints every 1000 step
-    save_steps=1000,
+    per_device_train_batch_size=12,  # the training batch size, put it as high as your GPU memory fits
+    gradient_accumulation_steps=8,  # accumulating the gradients before updating the weights
+    per_device_eval_batch_size=12,  # evaluation batch size
+    logging_steps=200,  # evaluate, log and save model checkpoints every 1000 step
+    save_steps=200,
     report_to="tensorboard",
-    remove_unused_columns=False,
-    load_best_model_at_end=True,  # whether to load the best model (in terms of loss) at the end of training
+    remove_unused_columns=True,
+    load_best_model_at_end=False,  # whether to load the best model (in terms of loss) at the end of training
     save_total_limit=3,  # whether you don't have much space so you let only 3 model weights saved in the disk
     weight_decay=0.01, # ??? people seem to do this stuff when fine-tuning?
     learning_rate=1e-5 # ??? people seem to do this stuff when fine-tuning?
